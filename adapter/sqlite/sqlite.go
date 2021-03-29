@@ -1,8 +1,33 @@
 package sqlite
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
+	_ "github.com/mattn/go-sqlite3"
 )
+
+// NewDB returns a DB that will automatically migrate the schema.
+func NewDB(dsn string, tableName string) (*sql.DB, error) {
+	if dsn == "" {
+		return nil, errors.New("dsn is not provided")
+	}
+	if tableName == "" {
+		return nil, errors.New("tableName is not provided")
+	}
+
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = db.Exec(MigrateSchema(tableName))
+	if err != nil {
+		return nil, err
+	}
+
+	return db, err
+}
 
 func MigrateSchema(tableName string) string {
 	return fmt.Sprintf(`

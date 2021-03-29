@@ -3,24 +3,23 @@ package adapter
 import (
 	"casbin-transaction-demo/adapter/sqlite"
 	"casbin-transaction-demo/model"
+	"context"
 	"database/sql"
 	"fmt"
 	"sync"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
-type sqliteAdapter struct {
+type SQLiteAdapter struct {
 	lock      *sync.RWMutex
 	db        *sql.DB
 	tableName string
 }
 
-var _ Adapter = &sqliteAdapter{}
+var _ Adapter = &SQLiteAdapter{}
 
 // file:test.db?cache=shared&mode=memory
-func NewSqliteAdapter(dsn string, tableName string) (Adapter, error) {
-	s := &sqliteAdapter{
+func NewSqliteAdapter(dsn string, tableName string) (*SQLiteAdapter, error) {
+	s := &SQLiteAdapter{
 		lock:      &sync.RWMutex{},
 		tableName: "policy",
 	}
@@ -29,25 +28,20 @@ func NewSqliteAdapter(dsn string, tableName string) (Adapter, error) {
 		s.tableName = tableName
 	}
 
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sqlite.NewDB(dsn, s.tableName)
 	if err != nil {
 		return nil, err
 	}
-
-	_, err = db.Exec(sqlite.MigrateSchema(s.tableName))
-	if err != nil {
-		return nil, err
-	}
-
 	s.db = db
 
 	return s, nil
 }
 
-func (s *sqliteAdapter) LoadPolicy(m *interface{}) error {
-	root := (*m).(model.Model)
+func (s *SQLiteAdapter) LoadPolicy(_ context.Context, m *interface{}) error {
+	root := (*m).(*model.Model)
 
 	s.lock.RLock()
+	defer s.lock.RUnlock()
 
 	rows, err := s.db.Query(sqlite.QueryPolicySQL(s.tableName))
 	if err != nil {
@@ -57,41 +51,41 @@ func (s *sqliteAdapter) LoadPolicy(m *interface{}) error {
 	defer rows.Close()
 	for rows.Next() {
 		var (
-			ptype string
-			v0    string
-			v1    string
-			v2    string
-			v3    string
-			v4    string
-			v5    string
+			ptype sql.NullString
+			v0    sql.NullString
+			v1    sql.NullString
+			v2    sql.NullString
+			v3    sql.NullString
+			v4    sql.NullString
+			v5    sql.NullString
 		)
 
-		err := rows.Scan(&ptype, &v1, &v2, &v3, &v4, &v5)
+		err := rows.Scan(&ptype, &v0, &v1, &v2, &v3, &v4, &v5)
 		if err != nil {
 			return err
 		}
 
 		var rule []string
-		if ptype != "" {
-			rule = append(rule, ptype)
+		if ptype.Valid {
+			rule = append(rule, ptype.String)
 		}
-		if v0 != "" {
-			rule = append(rule, v0)
+		if v0.Valid {
+			rule = append(rule, v0.String)
 		}
-		if v1 != "" {
-			rule = append(rule, v1)
+		if v1.Valid {
+			rule = append(rule, v1.String)
 		}
-		if v2 != "" {
-			rule = append(rule, v2)
+		if v2.Valid {
+			rule = append(rule, v2.String)
 		}
-		if v3 != "" {
-			rule = append(rule, v3)
+		if v3.Valid {
+			rule = append(rule, v3.String)
 		}
-		if v4 != "" {
-			rule = append(rule, v4)
+		if v4.Valid {
+			rule = append(rule, v4.String)
 		}
-		if v5 != "" {
-			rule = append(rule, v5)
+		if v5.Valid {
+			rule = append(rule, v5.String)
 		}
 		root.AddPolicy(rule)
 	}
@@ -100,18 +94,18 @@ func (s *sqliteAdapter) LoadPolicy(m *interface{}) error {
 	return err
 }
 
-func (s *sqliteAdapter) begin() (Tx, error) {
+func (s *SQLiteAdapter) begin() (Tx, error) {
 	s.lock.Lock()
-	t, err := NewSqliteAdapterTx(s.db, s.tableName)
+	t, err := NewSQLiteAdapterTx(s.lock, s.db, s.tableName)
 	if err != nil {
+		s.lock.Unlock()
 		return nil, err
 	}
 	return t, nil
 }
 
-func (s *sqliteAdapter) Update(fn func(Tx) error) error {
+func (s *SQLiteAdapter) Update(fn func(Tx) error) error {
 	t, err := s.begin()
-	defer s.lock.Unlock()
 	if err != nil {
 		return err
 	}
@@ -126,4 +120,16 @@ func (s *sqliteAdapter) Update(fn func(Tx) error) error {
 	}
 
 	return t.Commit()
+}
+
+func (s *SQLiteAdapter) Begin() (Tx, error) {
+	return s.begin()
+}
+
+func (s *SQLiteAdapter) Close() error {
+	if s.db != nil {
+		return s.db.Close()
+	}
+
+	return nil
 }

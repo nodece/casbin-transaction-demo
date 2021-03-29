@@ -2,27 +2,30 @@ package adapter
 
 import (
 	"casbin-transaction-demo/adapter/sqlite"
+	"context"
 	"database/sql"
 	_ "github.com/mattn/go-sqlite3"
+	"sync"
 )
 
-type sqliteAdapterTx struct {
+type SQLiteAdapterTx struct {
 	tableName string
 
-	tx *sql.Tx
-
+	tx         *sql.Tx
+	db         *sql.DB
+	rootLock   *sync.RWMutex
 	addStmt    *sql.Stmt
 	removeStmt *sql.Stmt
 	cleanStmt  *sql.Stmt
 }
 
-func NewSqliteAdapterTx(db *sql.DB, tableName string) (*sqliteAdapterTx, error) {
+func NewSQLiteAdapterTx(rootLock *sync.RWMutex, db *sql.DB, tableName string) (*SQLiteAdapterTx, error) {
 	tx, err := db.Begin()
 	if err != nil {
 		return nil, err
 	}
 
-	s := &sqliteAdapterTx{tx: tx, tableName: tableName}
+	s := &SQLiteAdapterTx{rootLock: rootLock, tx: tx, db: db, tableName: tableName}
 
 	addStmt, err := tx.Prepare(sqlite.AddPolicySQL(tableName))
 	if err != nil {
@@ -45,54 +48,51 @@ func NewSqliteAdapterTx(db *sql.DB, tableName string) (*sqliteAdapterTx, error) 
 	return s, nil
 }
 
-func (s *sqliteAdapterTx) Commit() error {
+func (s *SQLiteAdapterTx) Commit() error {
+	s.rootLock.Unlock()
 	return s.tx.Commit()
 }
 
-func (s *sqliteAdapterTx) Rollback() error {
+func (s *SQLiteAdapterTx) Rollback() error {
+	s.rootLock.Unlock()
 	return s.tx.Rollback()
 }
 
-func (s *sqliteAdapterTx) AddPolicy(_ string, ptype string, rule []string) error {
+func (s *SQLiteAdapterTx) AddPolicy(sec string, ptype string, rule []string) error {
+	return s.AddPolicyContext(context.Background(), sec, ptype, rule)
+}
+
+func (s *SQLiteAdapterTx) AddPolicyContext(ctx context.Context, _ string, ptype string, rule []string) error {
 	params := make([]interface{}, 7)
 	params[0] = ptype
 	for i, v := range rule {
 		params[i+1] = v
 	}
 
-	_, err := s.addStmt.Exec(params...)
+	_, err := s.addStmt.ExecContext(ctx, params...)
 	return err
 }
 
-func (s *sqliteAdapterTx) RemovePolicy(_ string, ptype string, rule []string) error {
+func (s *SQLiteAdapterTx) RemovePolicy(sec string, ptype string, rule []string) error {
+	return s.RemovePolicyContext(context.Background(), sec, ptype, rule)
+}
+
+func (s *SQLiteAdapterTx) RemovePolicyContext(ctx context.Context, _ string, ptype string, rule []string) error {
 	params := make([]interface{}, 7)
 	params[0] = ptype
 	for i, v := range rule {
 		params[i+1] = v
 	}
 
-	_, err := s.removeStmt.Exec(params...)
+	_, err := s.removeStmt.ExecContext(ctx, params...)
 	return err
 }
 
-func (s *sqliteAdapterTx) CleanPolicy() error {
-	_, err := s.cleanStmt.Exec()
-	return err
+func (s *SQLiteAdapterTx) CleanPolicy() error {
+	return s.CleanPolicyContext(context.Background())
 }
 
-func (s *sqliteAdapterTx) SavePolicy(policy map[string]map[string][]string) error {
-	err := s.CleanPolicy()
-	if err != nil {
-		return err
-	}
-
-	for _, value := range policy {
-		for ptype, rule := range value {
-			err = s.AddPolicy("", ptype, rule)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+func (s *SQLiteAdapterTx) CleanPolicyContext(ctx context.Context) error {
+	_, err := s.cleanStmt.ExecContext(ctx)
+	return err
 }

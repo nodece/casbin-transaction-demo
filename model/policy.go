@@ -1,29 +1,48 @@
 package model
 
-type Policy [][]string
+import (
+	"strings"
+)
 
-func (p *Policy) Add(rule []string) {
-	*p = append(*p, rule)
+type PolicyContainer struct {
+	policy      [][]string
+	policyIndex map[string]int
 }
 
-func (p *Policy) Remove(rule []string) {
-	for i := range *p {
-		if equal((*p)[i], rule) {
-			*p = append((*p)[:i], (*p)[i+1:]...)
-			break
+func NewPolicyContainer() *PolicyContainer {
+	p := &PolicyContainer{
+		policy:      make([][]string, 0),
+		policyIndex: make(map[string]int),
+	}
+	return p
+}
+
+const DefaultSep = ","
+
+func (p *PolicyContainer) Add(rules [][]string) {
+	for _, rule := range rules {
+		hashKey := strings.Join(rule, DefaultSep)
+		_, ok := p.policyIndex[hashKey]
+		if ok {
+			continue
+		}
+		p.policy = append(p.policy, rule)
+		p.policyIndex[hashKey] = len(p.policy) - 1
+	}
+}
+
+func (p *PolicyContainer) Remove(rules [][]string) {
+	for _, rule := range rules {
+		hashKey := strings.Join(rule, DefaultSep)
+		index, ok := p.policyIndex[hashKey]
+		if !ok {
+			continue
+		}
+
+		p.policy = append(p.policy[:index], p.policy[index+1:]...)
+		delete(p.policyIndex, hashKey)
+		for i := index; i < len(p.policy); i++ {
+			p.policyIndex[strings.Join(p.policy[i], DefaultSep)] = i
 		}
 	}
 }
-
-func equal(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i, v := range a {
-		if v != b[i] {
-			return false
-		}
-	}
-	return true
-}
-
